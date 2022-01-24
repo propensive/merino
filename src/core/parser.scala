@@ -3,15 +3,15 @@ package merino
 import annotation.*
 import gossamer.*
 import rudiments.*
-import scala.collection.mutable.{HashMap, ListBuffer}
+import scala.collection.mutable.{HashMap, ListBuffer, ArrayBuffer}
 
 import stdouts.stdout
 
 enum Json:
   case Number(value: Long | BigDecimal | Double)
   case JString(value: String)
-  case JObject(values: Map[String, Json])
-  case JArray(values: List[Json])
+  case JObject(values: HashMap[String, Json])
+  case JArray(values: IArray[Json])
   case True
   case False
   case Null
@@ -26,50 +26,50 @@ enum Json:
     case Null            => "null"
 
 object AsciiByte:
-  final val OpenBracket = '['.toByte
-  final val CloseBracket = ']'.toByte
-  final val OpenBrace = '{'.toByte
-  final val CloseBrace = '}'.toByte
-  final val Comma = ','.toByte
-  final val Colon = ':'.toByte
-  final val Quote = '"'.toByte
-  final val Minus = '-'.toByte
-  final val Plus = '+'.toByte
-  final val Slash = '/'.toByte
-  final val Period = '.'.toByte
-  final val Backslash = '\\'.toByte
-  final val Num0 = '0'.toByte
-  final val Num1 = '1'.toByte
-  final val Num2 = '2'.toByte
-  final val Num3 = '3'.toByte
-  final val Num4 = '4'.toByte
-  final val Num5 = '5'.toByte
-  final val Num6 = '6'.toByte
-  final val Num7 = '7'.toByte
-  final val Num8 = '8'.toByte
-  final val Num9 = '9'.toByte
-  final val LowerA = 'a'.toByte
-  final val LowerB = 'b'.toByte
-  final val LowerC = 'c'.toByte
-  final val LowerD = 'd'.toByte
-  final val LowerE = 'e'.toByte
-  final val LowerF = 'f'.toByte
-  final val LowerN = 'n'.toByte
-  final val LowerL = 'l'.toByte
-  final val LowerR = 'r'.toByte
-  final val LowerS = 's'.toByte
-  final val LowerT = 't'.toByte
-  final val LowerU = 'u'.toByte
-  final val UpperA = 'A'.toByte
-  final val UpperB = 'B'.toByte
-  final val UpperC = 'C'.toByte
-  final val UpperD = 'D'.toByte
-  final val UpperE = 'E'.toByte
-  final val UpperF = 'F'.toByte
-  final val Tab = '\t'.toByte
-  final val Space = ' '.toByte
-  final val Newline = '\n'.toByte
-  final val Return = '\r'.toByte
+  inline final val OpenBracket: 91 = 91 // '['
+  inline final val CloseBracket: 93 = 93 // ']'
+  inline final val OpenBrace: 123 = 123 // '{'
+  inline final val CloseBrace: 125 = 125 // '}'
+  inline final val Comma: 44 = 44 // ','
+  inline final val Colon: 58 = 58 // ':'
+  inline final val Quote: 34 = 34 // '"'
+  inline final val Minus: 45 = 45 // '-'
+  inline final val Plus: 43 = 43 // '+'
+  inline final val Slash: 47 = 47 // '/'
+  inline final val Period: 46 = 46 // '.'
+  inline final val Backslash: 92 = 92 // '\\'
+  inline final val Num0: 48 = 48 //'0'
+  inline final val Num1: 49 = 49 //'1'
+  inline final val Num2: 50 = 50 //'2'
+  inline final val Num3: 51 = 51 //'3'
+  inline final val Num4: 52 = 52 //'4'
+  inline final val Num5: 53 = 53 //'5'
+  inline final val Num6: 54 = 54 //'6'
+  inline final val Num7: 55 = 55 //'7'
+  inline final val Num8: 56 = 56 //'8'
+  inline final val Num9: 57 = 57 //'9'
+  inline final val LowerA: 97 = 97 // 'a'
+  inline final val LowerB: 98 = 98 // 'b'
+  inline final val LowerC: 99 = 99 // 'c'
+  inline final val LowerD: 100 = 100 // 'd'
+  inline final val LowerE: 101 = 101 // 'e'
+  inline final val LowerF: 102 = 102 // 'f'
+  inline final val LowerN: 110 = 110 // 'n'
+  inline final val LowerL: 108 = 108 // 'l'
+  inline final val LowerR: 114 = 114 // 'r'
+  inline final val LowerS: 115 = 115 // 's'
+  inline final val LowerT: 116 = 116 // 't'
+  inline final val LowerU: 117 = 117 // 'u'
+  inline final val UpperA: 65 = 65 // 'A'
+  inline final val UpperB: 66 = 66 // 'B'
+  inline final val UpperC: 67 = 67 // 'C'
+  inline final val UpperD: 68 = 68 // 'D'
+  inline final val UpperE: 69 = 69 // 'E'
+  inline final val UpperF: 70 = 70 // 'F'
+  inline final val Tab: 9 = 9 // '\t'
+  inline final val Space: 32 = 32 // ' '
+  inline final val Newline: 10 = 10 // '\n'
+  inline final val Return: 13 = 13 // '\r'
 import AsciiByte.*
 
 object Flag:
@@ -79,26 +79,29 @@ object Flag:
   final val NegativeExponent = 1 << 3
   final val LeadingZero = 1 << 4
   final val Large = 1 << 5
-  final val Tail = 1 << 6
-  final val Interminible = 1 << 7
+  final val Terminible = 1 << 6
 
 case class JsonParseError(pos: Int, message: Text) extends Exception(message.s)
 
 object Json:
   def parse(stream: DataStream): Json throws JsonParseError | StreamCutError = try
-    val block: Bytes = stream.head
+    val block: Array[Byte] = stream.head.unsafeMutable
     val penultimate = block.length - 1
     var cur: Int = 0
 
     if penultimate > 2 && block(0) == -17 && block(1) == -69 && block(2) == -65 then cur = 3
 
-    def current: Byte = block(cur)
-    def next(): Unit = cur += 1
+    inline def current: Byte = block(cur)
+    inline def next(): Unit = cur += 1
 
-    def skip(): Unit =
+    inline def skip(): Unit =
       while
         (current: @switch) match
           case Space | Return | Newline | Tab => true
+          case 11 | 12 | 14 | 15 | 16 | 17 |
+                   18 | 19 | 20 | 21 | 22 |
+                   23 | 24 | 25 | 26 | 27 |
+                   28 | 29 | 30 | 31          => false
           case _                              => false
       do next()
 
@@ -149,10 +152,10 @@ object Json:
             continue = false
           case ch => abort(t"expected a string but found '${ch.toChar}'")
       
-      Json.JObject(items.to(Map))
+      Json.JObject(items)
 
     def parseArray(): Json.JArray =
-      val items: ListBuffer[Json] = ListBuffer()
+      val items: ArrayBuffer[Json] = ArrayBuffer()
       var continue = true
       while continue do
         skip()
@@ -170,7 +173,7 @@ object Json:
         
         next()
       
-      Json.JArray(items.to(List))
+      Json.JArray(items.toArray.unsafeImmutable)
 
     def parseString(): Json.JString =
       val start = cur
@@ -198,15 +201,16 @@ object Json:
           
           case ch =>
             // FIXME: Optimization opportunity by reversing and nesting these
-            if (ch & 224) == 192 then
-              difference += 1
-              next()
-            else if (ch & 240) == 224 then
-              difference += 2
-              next(); next()
-            else if (ch & 248) == 240 then
-              difference += 3
-              next(); next(); next()
+            if (ch & 192) == 192 then
+              if (ch & 224) == 192 then
+                difference += 1
+                next()
+              else if (ch & 240) == 224 then
+                difference += 2
+                next(); next()
+              else if (ch & 248) == 240 then
+                difference += 3
+                next(); next(); next()
 
         next()
 
@@ -217,11 +221,11 @@ object Json:
 
       var offset: Int = 0
       
-      def append(char: Char): Unit =
+      inline def append(char: Char): Unit =
         array(offset) = char
         offset += 1
 
-      def parseUnicode(): Char =
+      inline def parseUnicode(): Char =
         next()
         var acc = fromHex(current)*4096
         next()
@@ -257,34 +261,35 @@ object Json:
             if ch >= 0 && ch < 32 then abort(t"unescaped control character '$ch'")
             // FIXME: Optimization opportunity by reversing and nesting these
             var char = 0
-            if (ch & 224) == 192 then
-              char = ((ch & 31) << 6)
-              next()
-              char += current & 63
-              append(char.toChar)
-            else if (ch & 240) == 224 then
-              char = ((ch & 31) << 12)
-              next()
-              char += (current & 63) << 6
-              next()
-              char += current & 63
-              append(char.toChar)
-            else if (ch & 248) == 240 then
-              char = ((ch & 31) << 18)
-              next()
-              char += (current & 63) << 12
-              next()
-              char += (current & 63) << 6
-              next()
-              char += current & 63
-              append(char.toChar)
-            else append(ch.toChar)
+            if (ch & 192) == 192 then
+              if (ch & 224) == 192 then
+                char = ((ch & 31) << 6)
+                next()
+                char += current & 63
+                append(char.toChar)
+              else if (ch & 240) == 224 then
+                char = ((ch & 31) << 12)
+                next()
+                char += (current & 63) << 6
+                next()
+                char += current & 63
+                append(char.toChar)
+              else if (ch & 248) == 240 then
+                char = ((ch & 31) << 18)
+                next()
+                char += (current & 63) << 12
+                next()
+                char += (current & 63) << 6
+                next()
+                char += current & 63
+                append(char.toChar)
+              else append(ch.toChar)
             
             next()
       
       Json.JString(String(array))
               
-    def fromHex(byte: Byte): Byte = (byte: @switch) match
+    inline def fromHex(byte: Byte): Byte = (byte: @switch) match
       case Num0  => 0
       case Num1  => 1
       case Num2  => 2
@@ -296,19 +301,19 @@ object Json:
       case Num8  => 8
       case Num9  => 9
       case _   => (byte: @switch) match
-        case UpperA  => 10
-        case UpperB  => 11
-        case UpperC  => 12
-        case UpperD  => 13
-        case UpperE  => 14
-        case UpperF  => 15
+        case LowerA  => 10
+        case LowerB => 11
+        case LowerC => 12
+        case LowerD => 13
+        case LowerE => 14
+        case LowerF => 15
         case _   => (byte: @switch) match
-          case LowerA  => 10
-          case LowerB => 11
-          case LowerC => 12
-          case LowerD => 13
-          case LowerE => 14
-          case LowerF => 15
+          case UpperA  => 10
+          case UpperB  => 11
+          case UpperC  => 12
+          case UpperD  => 13
+          case UpperE  => 14
+          case UpperF  => 15
           case _   => abort(t"expected a hexadecimal digit")
 
     def parseFalse(): Json.False.type =
@@ -347,13 +352,15 @@ object Json:
       var fractional: Long = 0L
       var exponent: Long = 0L
       var continue: Boolean = true
+
       var hasExponent: Boolean = false
       var terminible: Boolean = false
       var decimalPoint: Boolean = false
-      var divisor: Double = 1.0
-      var leadingZero: Boolean = current == Num0
       var negativeExponent: Boolean = false
       var large: Boolean = false
+      var leadingZero: Boolean = current == Num0
+      
+      var divisor: Double = 1.0
       var result: Double | BigDecimal | Long = 0L
       
       if current == Period then abort(t"cannot start a number with a decimal point")

@@ -14,6 +14,10 @@ object Tests extends Suite(t"Merino tests"):
     val tests = (Unix.Pwd / t"tests" / t"test_parsing").directory(Expect)
     val tests2 = (Unix.Pwd / t"tests" / t"test_transform").directory(Expect)
     
+    val file: Bytes = test(t"Read file"):
+      (Unix.Pwd / t"huge.json").file(Expect).read[DataStream](1.mb).slurp(200.mb)
+    .check(_ => true)
+    
     (tests.files ++ tests2.files).foreach:
       file =>
         if file.name.startsWith(t"n_")
@@ -41,8 +45,19 @@ object Tests extends Suite(t"Merino tests"):
                 err.printStackTrace()
                 Left(err.toString.show)
           .check(_.isRight)
+    
+    for i <- 1 to 20 do
+      test(t"Read huge file"):
+        Json.parse(LazyList(file))
+      .check(_ => true)
 
-given realm: Realm = Realm(t"tests")
+      test(t"Parse with Jawn"):
+        import org.typelevel.jawn.*, ast.*
+        JParser.parseFromByteBuffer(java.nio.ByteBuffer.wrap(file.unsafeMutable).nn)
+      .check(_ => true)
+
+
+// given realm: Realm = Realm(t"tests")
 
 @main def run(): Unit =
   println("STARTING")
