@@ -10,7 +10,7 @@ import stdouts.stdout
 enum Json:
   case Number(value: Long | BigDecimal | Double)
   case JString(value: String)
-  case JObject(values: HashMap[String, Json])
+  case JObject(keys: IArray[String], values: IArray[Json])
   case JArray(values: IArray[Json])
   case True
   case False
@@ -19,7 +19,10 @@ enum Json:
   override def toString(): String = this match
     case Number(value)   => value.toString
     case JString(value)  => t"\"${value}\"".s
-    case JObject(values) => values.map { (k, v) => t"\"$k\": $v" }.join(t"{ ", t", ", t" }").s
+    case JObject(keys, values) =>
+      keys.indices.map:
+        i => t"\"${keys(i)}\": ${values(i).toString}"
+      .join(t"{ ", t", ", t" }").s
     case JArray(values) => values.map(_.show).join(t"[ ", t", ", t" ]").s
     case True            => "true"
     case False           => "false"
@@ -88,6 +91,9 @@ object Json:
     val block: Array[Byte] = stream.head.unsafeMutable
     val penultimate = block.length - 1
     var cur: Int = 0
+    val arrayItems: ArrayBuffer[Json] = ArrayBuffer()
+    val objectValues: ArrayBuffer[Json] = ArrayBuffer()
+    val objectKeys: ArrayBuffer[String] = ArrayBuffer()
 
     if penultimate > 2 && block(0) == -17 && block(1) == -69 && block(2) == -65 then cur = 3
 
@@ -121,7 +127,6 @@ object Json:
         case ch                                        => abort(t"expected a value but found '${ch.toChar}'")
 
     def parseObject(): Json.JObject =
-      val items: HashMap[String, Json] = HashMap()
       var continue = true
       while continue do
         skip()
@@ -143,37 +148,41 @@ object Json:
                   case Comma =>
                     next()
                     skip()
-                    items += (str.value -> value)
+                    objectKeys += str.value
+                    objectValues += value
                   case ch  => abort(t"unexpected character: '${ch.toChar}'")
               case ch => abort(t"expected a colon but found '${ch.toChar}'")
           case CloseBrace =>
-            if !items.isEmpty then abort(t"closing brace appears after comma")
+            if !objectKeys.isEmpty then abort(t"closing brace appears after comma")
             next()
             continue = false
           case ch => abort(t"expected a string but found '${ch.toChar}'")
       
-      Json.JObject(items)
+      val result: Json.JObject = Json.JObject(objectKeys.toArray.unsafeImmutable, objectValues.toArray.unsafeImmutable)
+      objectValues.clear()
+      objectKeys.clear()
+      result
 
     def parseArray(): Json.JArray =
-      val items: ArrayBuffer[Json] = ArrayBuffer()
       var continue = true
       while continue do
         skip()
         current match
           case CloseBracket =>
-            if !items.isEmpty then abort(t"closing bracket appears after comma")
+            if !arrayItems.isEmpty then abort(t"closing bracket appears after comma")
             continue = false
           case ch =>
             val value = parseValue()
             skip()
             current match
-              case Comma        => items += value
+              case Comma        => arrayItems += value
               case CloseBracket => continue = false
               case ch           => abort(t"expected ',' or ']' but found '${ch.toChar}'")
         
         next()
-      
-      Json.JArray(items.toArray.unsafeImmutable)
+      val xs = arrayItems.toArray.unsafeImmutable
+      arrayItems.clear()
+      Json.JArray(xs)
 
     def parseString(): Json.JString =
       val start = cur
