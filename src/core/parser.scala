@@ -7,26 +7,30 @@ import scala.collection.mutable.{HashMap, ListBuffer, ArrayBuffer}
 
 import stdouts.stdout
 
-enum Json:
-  case Number(value: Long | BigDecimal | Double)
-  case JString(value: String)
-  case JObject(keys: IArray[String], values: IArray[Json])
-  case JArray(values: IArray[Json])
-  case True
-  case False
-  case Null
+// enum Json:
+//   case Number(value: Long | BigDecimal | Double)
+//   case JString(value: String)
+//   case JObject(keys: IArray[String], values: IArray[Json])
+//   case JArray(values: IArray[Json])
+//   case True
+//   case False
+//   case Null
 
-  override def toString(): String = this match
-    case Number(value)   => value.toString
-    case JString(value)  => t"\"${value}\"".s
-    case JObject(keys, values) =>
-      keys.indices.map:
-        i => t"\"${keys(i)}\": ${values(i).toString}"
-      .join(t"{ ", t", ", t" }").s
-    case JArray(values) => values.map(_.show).join(t"[ ", t", ", t" ]").s
-    case True            => "true"
-    case False           => "false"
-    case Null            => "null"
+//   override def toString(): String = this match
+//     case Number(value)   => value.toString
+//     case JString(value)  => t"\"${value}\"".s
+//     case JObject(keys, values) =>
+//       keys.indices.map:
+//         i => t"\"${keys(i)}\": ${values(i).toString}"
+//       .join(t"{ ", t", ", t" }").s
+//     case JArray(values) => values.map(_.show).join(t"[ ", t", ", t" ]").s
+//     case True            => "true"
+//     case False           => "false"
+//     case Null            => "null"
+
+case object JNull
+case class JObject(keys: IArray[String], values: IArray[JsonValue])
+type JsonValue = Long | BigDecimal | Double | String | JObject | IArray[Any] | Boolean | JNull.type
 
 object AsciiByte:
   inline final val OpenBracket: 91 = 91 // '['
@@ -87,20 +91,21 @@ object Flag:
 case class JsonParseError(pos: Int, message: Text) extends Exception(message.s)
 
 object Json:
-  def parse(stream: DataStream): Json throws JsonParseError | StreamCutError = try
+  def parse(stream: DataStream): JsonValue throws JsonParseError | StreamCutError = try
     val block: Array[Byte] = stream.head.unsafeMutable
     val penultimate = block.length - 1
     var cur: Int = 0
-    val arrayItems: ArrayBuffer[Json] = ArrayBuffer()
-    val objectValues: ArrayBuffer[Json] = ArrayBuffer()
+    val arrayItems: ArrayBuffer[JsonValue] = ArrayBuffer()
+    val objectValues: ArrayBuffer[JsonValue] = ArrayBuffer()
     val objectKeys: ArrayBuffer[String] = ArrayBuffer()
+    val bigDecimal: StringBuilder = StringBuilder()
 
     if penultimate > 2 && block(0) == -17 && block(1) == -69 && block(2) == -65 then cur = 3
 
     inline def current: Byte = block(cur)
     inline def next(): Unit = cur += 1
 
-    inline def skip(): Unit =
+    def skip(): Unit =
       while
         (current: @switch) match
           case Space | Return | Newline | Tab => true
@@ -113,7 +118,7 @@ object Json:
 
     def abort(message: Text): Nothing = throw JsonParseError(cur, message)
 
-    def parseValue(): Json =
+    def parseValue(): JsonValue =
       (current: @switch) match
         case Quote                                     => next(); parseString()
         case Minus                                     => next(); parseNumber(cur, true)
@@ -126,7 +131,7 @@ object Json:
         case OpenBrace                                 => next(); parseObject()
         case ch                                        => abort(t"expected a value but found '${ch.toChar}'")
 
-    def parseObject(): Json.JObject =
+    def parseObject(): JObject =
       var continue = true
       while continue do
         skip()
@@ -139,7 +144,7 @@ object Json:
               case Colon =>
                 next()
                 skip()
-                val value = parseValue()
+                val value: JsonValue = parseValue()
                 skip()
                 current match
                   case CloseBrace =>
@@ -148,7 +153,7 @@ object Json:
                   case Comma =>
                     next()
                     skip()
-                    objectKeys += str.value
+                    objectKeys += str
                     objectValues += value
                   case ch  => abort(t"unexpected character: '${ch.toChar}'")
               case ch => abort(t"expected a colon but found '${ch.toChar}'")
@@ -158,12 +163,12 @@ object Json:
             continue = false
           case ch => abort(t"expected a string but found '${ch.toChar}'")
       
-      val result: Json.JObject = Json.JObject(objectKeys.toArray.unsafeImmutable, objectValues.toArray.unsafeImmutable)
+      val result: JObject = JObject(objectKeys.toArray.asInstanceOf[IArray[String]], objectValues.toArray.asInstanceOf[IArray[JsonValue]])
       objectValues.clear()
       objectKeys.clear()
       result
 
-    def parseArray(): Json.JArray =
+    def parseArray(): JsonValue =
       var continue = true
       while continue do
         skip()
@@ -172,19 +177,19 @@ object Json:
             if !arrayItems.isEmpty then abort(t"closing bracket appears after comma")
             continue = false
           case ch =>
-            val value = parseValue()
+            val value: JsonValue = parseValue()
             skip()
             current match
               case Comma        => arrayItems += value
-              case CloseBracket => continue = false
+              case CloseBracket => arrayItems += value; continue = false
               case ch           => abort(t"expected ',' or ']' but found '${ch.toChar}'")
         
         next()
-      val xs = arrayItems.toArray.unsafeImmutable
+      val xs = arrayItems.toArray
       arrayItems.clear()
-      Json.JArray(xs)
+      xs.asInstanceOf[IArray[Any]]
 
-    def parseString(): Json.JString =
+    def parseString(): String =
       val start = cur
       var continue = true
       var difference = 0
@@ -209,7 +214,6 @@ object Json:
                 difference += 1
           
           case ch =>
-            // FIXME: Optimization opportunity by reversing and nesting these
             if (ch & 192) == 192 then
               if (ch & 224) == 192 then
                 difference += 1
@@ -225,7 +229,7 @@ object Json:
 
       val array: Array[Char] = new Array(size)
 
-      continue = true
+      val end = cur
       cur = start
 
       var offset: Int = 0
@@ -245,58 +249,51 @@ object Json:
         acc = acc + fromHex(current)
         acc.toChar
 
-      while continue do
-        current match
-          case Quote =>
-            next()
-            continue = false
-          
-          case Backslash =>
-            next()
-            current match
-              case Quote     => append('"')
-              case Slash     => append('/')
-              case Backslash => append('\\')
-              case LowerB    => append('\b')
-              case LowerF    => append('\f')
-              case LowerN    => append('\n')
-              case LowerR    => append('\r')
-              case LowerT    => append('\t')
-              case LowerU    => append(parseUnicode())
-              case ch        => abort(t"the character '$ch' should not be escaped")
-            next()
-
-          case ch =>
-            if ch >= 0 && ch < 32 then abort(t"unescaped control character '$ch'")
-            // FIXME: Optimization opportunity by reversing and nesting these
-            var char = 0
-            if (ch & 192) == 192 then
-              if (ch & 224) == 192 then
-                char = ((ch & 31) << 6)
-                next()
-                char += current & 63
-                append(char.toChar)
-              else if (ch & 240) == 224 then
-                char = ((ch & 31) << 12)
-                next()
-                char += (current & 63) << 6
-                next()
-                char += current & 63
-                append(char.toChar)
-              else if (ch & 248) == 240 then
-                char = ((ch & 31) << 18)
-                next()
-                char += (current & 63) << 12
-                next()
-                char += (current & 63) << 6
-                next()
-                char += current & 63
-                append(char.toChar)
-              else append(ch.toChar)
+      while cur < end do
+        val ch = current
+        if ch == Backslash then
+          next()
+          current match
+            case Quote     => append('"')
+            case Slash     => append('/')
+            case Backslash => append('\\')
+            case LowerB    => append('\b')
+            case LowerF    => append('\f')
+            case LowerN    => append('\n')
+            case LowerR    => append('\r')
+            case LowerT    => append('\t')
+            case LowerU    => append(parseUnicode())
+            case ch        => abort(t"the character '$ch' should not be escaped")
+        else
+          if ch >= 0 && ch < 32 then abort(t"unescaped control character '$ch'")
+          var char = 0
+          if (ch & 192) == 192 then
+            if (ch & 224) == 192 then
+              char = ((ch & 31) << 6)
+              next()
+              char += current & 63
+              append(char.toChar)
+            else if (ch & 240) == 224 then
+              char = ((ch & 31) << 12)
+              next()
+              char += (current & 63) << 6
+              next()
+              char += current & 63
+              append(char.toChar)
+            else if (ch & 248) == 240 then
+              char = ((ch & 31) << 18)
+              next()
+              char += (current & 63) << 12
+              next()
+              char += (current & 63) << 6
+              next()
+              char += current & 63
+              append(char.toChar)
+            else append(ch.toChar)
             
-            next()
+        next()
       
-      Json.JString(String(array))
+      String(array)
               
     inline def fromHex(byte: Byte): Byte = (byte: @switch) match
       case Num0  => 0
@@ -325,7 +322,7 @@ object Json:
           case UpperF  => 15
           case _   => abort(t"expected a hexadecimal digit")
 
-    def parseFalse(): Json.False.type =
+    def parseFalse(): Boolean =
       if current != LowerA then abort(t"expected 'false'")
       next()
       if current != LowerL then abort(t"expected 'false'")
@@ -334,30 +331,29 @@ object Json:
       next()
       if current != LowerE then abort(t"expected 'false'")
       next()
-      Json.False
+      false
     
-    def parseTrue(): Json.True.type =
+    def parseTrue(): Boolean =
       if current != LowerR then abort(t"expected 'true'")
       next()
       if current != LowerU then abort(t"expected 'true'")
       next()
       if current != LowerE then abort(t"expected 'true'")
       next()
-      Json.True
+      true
     
-    def parseNull(): Json.Null.type =
+    def parseNull(): JNull.type =
       if current != LowerU then abort(t"expected 'null'")
       next()
       if current != LowerL then abort(t"expected 'null'")
       next()
       if current != LowerL then abort(t"expected 'null'")
       next()
-      Json.Null
-
-    def parseNumber(start: Int, negative: Boolean): Json.Number =
+      JNull
+    
+    def parseNumber(start: Int, negative: Boolean): Long | Double | BigDecimal =
       import Flag.*
       var mantissa: Long = 0L
-      lazy val bigDecimal: StringBuffer = StringBuffer()
       var fractional: Long = 0L
       var exponent: Long = 0L
       var continue: Boolean = true
@@ -367,12 +363,13 @@ object Json:
       var decimalPoint: Boolean = false
       var negativeExponent: Boolean = false
       var large: Boolean = false
-      var leadingZero: Boolean = current == Num0
+      val ch = current
+      var leadingZero: Boolean = ch == Num0
       
       var divisor: Double = 1.0
       var result: Double | BigDecimal | Long = 0L
       
-      if current == Period then abort(t"cannot start a number with a decimal point")
+      if ch == Period then abort(t"cannot start a number with a decimal point")
 
       while continue do
         (current: @switch) match
@@ -433,7 +430,10 @@ object Json:
             
             result = 
               if large then
-                try BigDecimal(bigDecimal.toString)
+                try
+                  val result = BigDecimal(bigDecimal.toString)
+                  bigDecimal.setLength(0)
+                  result
                 catch
                   case err: NumberFormatException => Out.println(t"Tried to parse '${bigDecimal.toString}'"); throw err
               else if decimalPoint then (mantissa + fractional/divisor)*(if negative then -1 else 1)
@@ -443,11 +443,11 @@ object Json:
           
           case ch =>
             abort(t"found an unexpected character '$ch'")
-      
-      Json.Number(result)
+
+      result
     
     skip()
-    val result = parseValue()
+    val result: JsonValue = parseValue()
     while cur < block.length
     do
       current match

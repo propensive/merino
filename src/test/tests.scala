@@ -37,7 +37,7 @@ object Tests extends Suite(t"Merino tests"):
           test(t"Positive test: ${file.name.drop(5, Rtl)}"):
             try
               val j = Json.parse(file.read[DataStream](1.mb))
-              Right(j.show)
+              Right(j.toString)
             catch
               case err: JsonParseError => err match
                 case JsonParseError(_, msg) => Left(msg)
@@ -46,7 +46,7 @@ object Tests extends Suite(t"Merino tests"):
                 Left(err.toString.show)
           .check(_.isRight)
     
-    for i <- 1 to 20 do
+    for i <- 1 to 50 do
       test(t"Read huge file"):
         Json.parse(LazyList(file))
       .check(_ => true)
